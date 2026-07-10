@@ -1762,33 +1762,58 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Combinations to try when opening a camera, from best quality to most
+  /// compatible. Not every camera can negotiate/allocate a buffer for a given
+  /// resolution + pixel format (a raw V4L2 source may fail with "Failed to
+  /// allocate required memory" at 720p, or only expose MJPEG at some sizes),
+  /// so we fall back through safer options instead of hardcoding one.
+  static const _openAttempts = <(ResolutionPreset, ImageFormatGroup?)>[
+    (ResolutionPreset.high, ImageFormatGroup.jpeg),
+    (ResolutionPreset.high, null),
+    (ResolutionPreset.medium, ImageFormatGroup.jpeg),
+    (ResolutionPreset.medium, null),
+    (ResolutionPreset.low, null),
+  ];
+
   Future<void> _openCamera(int index) async {
     final previous = _controller;
     _controller = null;
     await previous?.dispose();
 
-    final controller = CameraController(
-      _cameras[index],
-      ResolutionPreset.high,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.jpeg,
-    );
-    try {
-      await controller.initialize();
-      if (!mounted) {
-        await controller.dispose();
+    CameraException? lastError;
+    for (final (preset, format) in _openAttempts) {
+      final controller = CameraController(
+        _cameras[index],
+        preset,
+        enableAudio: false,
+        imageFormatGroup: format,
+      );
+      try {
+        await controller.initialize();
+        if (!mounted) {
+          await controller.dispose();
+          return;
+        }
+        setState(() {
+          _controller = controller;
+          _index = index;
+          _busy = false;
+          _error = null;
+        });
         return;
+      } on CameraException catch (e) {
+        await controller.dispose();
+        lastError = e;
+        // A denied/restricted permission won't be fixed by retrying with a
+        // different resolution, so stop early.
+        if (e.code == 'CameraAccessDenied' ||
+            e.code == 'CameraAccessDeniedWithoutPrompt' ||
+            e.code == 'CameraAccessRestricted') {
+          break;
+        }
       }
-      setState(() {
-        _controller = controller;
-        _index = index;
-        _busy = false;
-        _error = null;
-      });
-    } on CameraException catch (e) {
-      await controller.dispose();
-      if (mounted) setState(() => _fail(e));
     }
+    if (mounted && lastError != null) setState(() => _fail(lastError!));
   }
 
   void _fail(CameraException e) {
