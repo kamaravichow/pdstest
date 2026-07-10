@@ -107,13 +107,12 @@ ln -sf "$SHARE_DIR/$APP_NAME" "$BIN_DIR/$APP_NAME"
 
 info "Installed $APP_NAME -> $BIN_DIR/$APP_NAME"
 
-# Nudge the user if the bin dir isn't on PATH.
+# Ensure the bin dir is on PATH for this session.
 case ":$PATH:" in
   *":$BIN_DIR:"*) : ;;
   *)
-    printf '\n\033[33mnote:\033[0m %s is not on your PATH.\n' "$BIN_DIR"
-    printf '  Add this to your ~/.bashrc or ~/.profile:\n'
-    printf '    export PATH="%s:$PATH"\n\n' "$BIN_DIR"
+    export PATH="$BIN_DIR:$PATH"
+    info "Added $BIN_DIR to PATH"
     ;;
 esac
 
