@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ---- Configuration ---------------------------------------------------------
 # Set REPO to "owner/name" of your GitHub repository. Override via env if needed.
-REPO="${REPO:-aravind/pdstest}"
+REPO="${REPO:-kamaravichow/pdstest}"
 APP_NAME="pdstest"
 VERSION="${VERSION:-latest}"
 
