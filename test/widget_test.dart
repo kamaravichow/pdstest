@@ -56,4 +56,27 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('settings offers close software while remaining in app chrome', (
+    tester,
+  ) async {
+    await pumpAt(tester, const Size(1440, 1000));
+
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.byKey(const Key('close-software')), findsOneWidget);
+    expect(find.text('Close software'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('phone layout exposes settings from the header', (tester) async {
+    await pumpAt(tester, const Size(390, 844));
+
+    expect(find.byKey(const Key('open-settings')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('open-settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('Close software'), findsOneWidget);
+  });
 }

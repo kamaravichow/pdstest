@@ -1,9 +1,32 @@
 import 'dart:math' as math;
+import 'dart:ui' show AppExitType, PointerDeviceKind;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const SmartHomeApp());
+}
+
+/// Enables drag-to-scroll for touchscreens, mice, styluses, and trackpads.
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    return const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
+  }
 }
 
 class SmartHomeApp extends StatelessWidget {
@@ -14,6 +37,7 @@ class SmartHomeApp extends StatelessWidget {
     return MaterialApp(
       title: 'Haven Smart Home',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const AppScrollBehavior(),
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: AppColors.background,
@@ -94,6 +118,79 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
     setState(() => _devicePower[name] = !(_devicePower[name] ?? false));
   }
 
+  void _selectSection(DashboardSection section) {
+    setState(() => _section = section);
+  }
+
+  void _onHorizontalSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 420) return;
+    final values = DashboardSection.values;
+    final index = _section.index;
+    if (velocity < 0 && index < values.length - 1) {
+      _selectSection(values[index + 1]);
+    } else if (velocity > 0 && index > 0) {
+      _selectSection(values[index - 1]);
+    }
+  }
+
+  Future<void> _closeSoftware() async {
+    // Quits the process on Linux/desktop while staying in fullscreen until exit.
+    await WidgetsBinding.instance.exitApplication(AppExitType.required);
+    // Fallback if the platform cancelled the exit request.
+    await SystemNavigator.pop();
+  }
+
+  void _showSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.cardRaised,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Settings',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'App stays fullscreen. Use Close software to quit.',
+                  style: TextStyle(color: AppColors.muted),
+                ),
+                const SizedBox(height: 18),
+                ListTile(
+                  key: const Key('close-software'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: AppColors.red.withValues(alpha: .18),
+                    child: const Icon(
+                      Icons.power_settings_new_rounded,
+                      color: AppColors.red,
+                    ),
+                  ),
+                  title: const Text('Close software'),
+                  subtitle: const Text('Quit Haven and leave fullscreen'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await _closeSoftware();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _showAddDevice() {
     showModalBottomSheet<void>(
       context: context,
@@ -164,43 +261,50 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
 
         return Scaffold(
           body: SafeArea(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!isNarrow)
-                  _NavigationRail(
-                    width: railWidth,
-                    compactHeight: constraints.maxHeight < 700,
-                    selected: _section,
-                    onSelected: (value) => setState(() => _section = value),
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragEnd: _onHorizontalSwipe,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (!isNarrow)
+                    _NavigationRail(
+                      width: railWidth,
+                      compactHeight: constraints.maxHeight < 700,
+                      selected: _section,
+                      onSelected: _selectSection,
+                      onOpenSettings: _showSettings,
+                    ),
+                  Expanded(
+                    child: _DashboardScrollView(
+                      isDesktop: isDesktop,
+                      isNarrow: isNarrow,
+                      searchController: _searchController,
+                      onAddDevice: _showAddDevice,
+                      onOpenSettings: isNarrow ? _showSettings : null,
+                      power: _devicePower,
+                      onToggle: _toggle,
+                      lightIntensity: _lightIntensity,
+                      onLightChanged: (value) =>
+                          setState(() => _lightIntensity = value),
+                      musicProgress: _musicProgress,
+                      playing: _playing,
+                      onMusicChanged: (value) =>
+                          setState(() => _musicProgress = value),
+                      onPlayToggle: () => setState(() => _playing = !_playing),
+                      onTime: _onTime,
+                      offTime: _offTime,
+                      onOnTimeChanged: (value) =>
+                          setState(() => _onTime = value),
+                      onOffTimeChanged: (value) =>
+                          setState(() => _offTime = value),
+                      selectedForecast: _selectedForecast,
+                      onForecastSelected: (value) =>
+                          setState(() => _selectedForecast = value),
+                    ),
                   ),
-                Expanded(
-                  child: _DashboardScrollView(
-                    isDesktop: isDesktop,
-                    isNarrow: isNarrow,
-                    searchController: _searchController,
-                    onAddDevice: _showAddDevice,
-                    power: _devicePower,
-                    onToggle: _toggle,
-                    lightIntensity: _lightIntensity,
-                    onLightChanged: (value) =>
-                        setState(() => _lightIntensity = value),
-                    musicProgress: _musicProgress,
-                    playing: _playing,
-                    onMusicChanged: (value) =>
-                        setState(() => _musicProgress = value),
-                    onPlayToggle: () => setState(() => _playing = !_playing),
-                    onTime: _onTime,
-                    offTime: _offTime,
-                    onOnTimeChanged: (value) => setState(() => _onTime = value),
-                    onOffTimeChanged: (value) =>
-                        setState(() => _offTime = value),
-                    selectedForecast: _selectedForecast,
-                    onForecastSelected: (value) =>
-                        setState(() => _selectedForecast = value),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           bottomNavigationBar: isNarrow
@@ -209,7 +313,7 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
                   indicatorColor: AppColors.cardRaised,
                   selectedIndex: _section.index,
                   onDestinationSelected: (index) =>
-                      setState(() => _section = DashboardSection.values[index]),
+                      _selectSection(DashboardSection.values[index]),
                   destinations: const [
                     NavigationDestination(
                       icon: Icon(Icons.home_outlined),
@@ -247,12 +351,14 @@ class _NavigationRail extends StatelessWidget {
     required this.compactHeight,
     required this.selected,
     required this.onSelected,
+    required this.onOpenSettings,
   });
 
   final double width;
   final bool compactHeight;
   final DashboardSection selected;
   final ValueChanged<DashboardSection> onSelected;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -317,20 +423,27 @@ class _NavigationRail extends StatelessWidget {
             _StatusDot(color: const Color(0xFFFFD166)),
             const Spacer(),
           ],
-          for (final icon
-              in compactHeight
-                  ? const [Icons.settings_outlined]
-                  : const [
-                      Icons.chat_bubble_outline_rounded,
-                      Icons.shield_outlined,
-                      Icons.settings_outlined,
-                    ])
+          if (!compactHeight) ...[
             IconButton(
-              tooltip: icon == Icons.settings_outlined ? 'Settings' : null,
+              tooltip: 'Messages',
               onPressed: () {},
               constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-              icon: Icon(icon, size: 21),
+              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 21),
             ),
+            IconButton(
+              tooltip: 'Security',
+              onPressed: () {},
+              constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+              icon: const Icon(Icons.shield_outlined, size: 21),
+            ),
+          ],
+          IconButton(
+            key: const Key('open-settings'),
+            tooltip: 'Settings',
+            onPressed: onOpenSettings,
+            constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+            icon: const Icon(Icons.settings_outlined, size: 21),
+          ),
           const SizedBox(height: 10),
         ],
       ),
@@ -356,6 +469,7 @@ class _DashboardScrollView extends StatelessWidget {
     required this.isNarrow,
     required this.searchController,
     required this.onAddDevice,
+    this.onOpenSettings,
     required this.power,
     required this.onToggle,
     required this.lightIntensity,
@@ -376,6 +490,7 @@ class _DashboardScrollView extends StatelessWidget {
   final bool isNarrow;
   final TextEditingController searchController;
   final VoidCallback onAddDevice;
+  final VoidCallback? onOpenSettings;
   final Map<String, bool> power;
   final ValueChanged<String> onToggle;
   final double lightIntensity;
@@ -396,6 +511,10 @@ class _DashboardScrollView extends StatelessWidget {
     final padding = isNarrow ? 12.0 : 18.0;
     return CustomScrollView(
       key: const Key('dashboard-scroll'),
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: [
         SliverPadding(
           padding: EdgeInsets.fromLTRB(padding, 14, padding, 24),
@@ -405,6 +524,7 @@ class _DashboardScrollView extends StatelessWidget {
                 controller: searchController,
                 isNarrow: isNarrow,
                 onAddDevice: onAddDevice,
+                onOpenSettings: onOpenSettings,
               ),
               const SizedBox(height: 16),
               if (isDesktop)
@@ -472,10 +592,12 @@ class _DashboardHeader extends StatelessWidget {
     required this.controller,
     required this.isNarrow,
     required this.onAddDevice,
+    this.onOpenSettings,
   });
   final TextEditingController controller;
   final bool isNarrow;
   final VoidCallback onAddDevice;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -547,6 +669,21 @@ class _DashboardHeader extends StatelessWidget {
             child: Icon(Icons.notifications_none_rounded),
           ),
         ),
+        if (onOpenSettings != null) ...[
+          const SizedBox(width: 10),
+          IconButton.filled(
+            key: const Key('open-settings'),
+            tooltip: 'Settings',
+            onPressed: onOpenSettings,
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.card,
+              foregroundColor: AppColors.white,
+              side: const BorderSide(color: AppColors.stroke),
+              fixedSize: const Size(50, 50),
+            ),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
       ],
     );
 
@@ -1300,6 +1437,9 @@ class _ForecastSection extends StatelessWidget {
             height: 132,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
+              ),
               itemCount: entries.length,
               separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) {
