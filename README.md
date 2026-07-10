@@ -1,17 +1,49 @@
-# pdstest
+# Haven Smart Home (pdstest)
 
-A new Flutter project.
+Flutter smart-home dashboard for Linux kiosk / desktop use.
 
-## Getting Started
+## Install (Linux)
 
-This project is a starting point for a Flutter application.
+```bash
+curl https://raw.githubusercontent.com/kamaravichow/pdstest/main/install.sh | bash
+```
 
-A few resources to get you started if this is your first Flutter project:
+This downloads the latest release, installs the app, and by default enables XDG autostart plus display-manager autologin (kiosk mode).
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+### Options
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VERSION` | `latest` | Install a specific release tag (e.g. `v1.0.0`) |
+| `PREFIX` | user install | System-wide install path (e.g. `/usr/local`; needs sudo) |
+| `AUTOSTART` | `1` | Set `0` to skip auto-launch on login |
+| `INSTALL_DEPS` | `1` | Set `0` to skip GStreamer runtime deps (needed for live camera) |
+| `KIOSK` | `1` | Set `0` to skip display-manager autologin |
+| `KIOSK_USER` | current user | Autologin as a specific user (e.g. `pi`) |
+
+Examples:
+
+```bash
+# Specific version
+curl -fsSL https://raw.githubusercontent.com/kamaravichow/pdstest/main/install.sh | VERSION=v1.0.0 bash
+
+# System-wide
+curl -fsSL https://raw.githubusercontent.com/kamaravichow/pdstest/main/install.sh | PREFIX=/usr/local bash
+
+# Skip kiosk autologin
+curl -fsSL https://raw.githubusercontent.com/kamaravichow/pdstest/main/install.sh | KIOSK=0 bash
+```
+
+If kiosk setup needs a sudo password, download first so the prompt works:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kamaravichow/pdstest/main/install.sh -o /tmp/pdstest-install.sh
+bash /tmp/pdstest-install.sh
+```
+
+## Development
+
+```bash
+flutter pub get
+flutter run -d linux
+```
