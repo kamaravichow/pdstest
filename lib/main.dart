@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show AppExitType, PointerDeviceKind;
 
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -82,7 +83,7 @@ class AppColors {
   static const green = Color(0xFF30D158);
 }
 
-enum DashboardSection { home, rooms, devices, automation, energy }
+enum DashboardSection { home, camera, rooms, devices, automation, energy }
 
 class SmartHomeDashboard extends StatefulWidget {
   const SmartHomeDashboard({super.key});
@@ -259,82 +260,75 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
         final isDesktop = width >= 1180;
         final railWidth = isNarrow ? 0.0 : (width < 900 ? 64.0 : 76.0);
 
-        // Keep everything inside the visible screen bounds. On fullscreen
-        // kiosk panels the window can be larger than the usable display, which
-        // pushed content (and the exit affordance) off screen.
-        final screen = MediaQuery.sizeOf(context);
-
         return Scaffold(
+          // SafeArea + ClipRect keep the UI inside the visible screen bounds on
+          // fullscreen kiosk panels; StackFit.expand gives the scroll view a
+          // bounded height so it can scroll all the way to the last card.
           body: SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: screen.width,
-                  maxHeight: screen.height,
-                ),
-                child: ClipRect(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onHorizontalDragEnd: _onHorizontalSwipe,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (!isNarrow)
-                                _NavigationRail(
-                                  width: railWidth,
-                                  compactHeight: constraints.maxHeight < 700,
-                                  selected: _section,
-                                  onSelected: _selectSection,
-                                  onOpenSettings: _showSettings,
-                                  onClose: _closeSoftware,
-                                ),
-                              Expanded(
-                                child: _DashboardScrollView(
-                      isDesktop: isDesktop,
-                      isNarrow: isNarrow,
-                      searchController: _searchController,
-                      onAddDevice: _showAddDevice,
-                      onOpenSettings: isNarrow ? _showSettings : null,
-                      power: _devicePower,
-                      onToggle: _toggle,
-                      lightIntensity: _lightIntensity,
-                      onLightChanged: (value) =>
-                          setState(() => _lightIntensity = value),
-                      musicProgress: _musicProgress,
-                      playing: _playing,
-                      onMusicChanged: (value) =>
-                          setState(() => _musicProgress = value),
-                      onPlayToggle: () => setState(() => _playing = !_playing),
-                      onTime: _onTime,
-                      offTime: _offTime,
-                      onOnTimeChanged: (value) =>
-                          setState(() => _onTime = value),
-                      onOffTimeChanged: (value) =>
-                          setState(() => _offTime = value),
-                                  selectedForecast: _selectedForecast,
-                                  onForecastSelected: (value) => setState(
-                                    () => _selectedForecast = value,
-                                  ),
-                                ),
-                              ),
-                            ],
+            child: ClipRect(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragEnd: _onHorizontalSwipe,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!isNarrow)
+                          _NavigationRail(
+                            width: railWidth,
+                            compactHeight: constraints.maxHeight < 700,
+                            selected: _section,
+                            onSelected: _selectSection,
+                            onOpenSettings: _showSettings,
+                            onClose: _closeSoftware,
                           ),
+                        Expanded(
+                          child: _section == DashboardSection.camera
+                              ? _CameraPage(isNarrow: isNarrow)
+                              : _DashboardScrollView(
+                                  isDesktop: isDesktop,
+                                  isNarrow: isNarrow,
+                                  searchController: _searchController,
+                                  onAddDevice: _showAddDevice,
+                                  onOpenSettings: isNarrow
+                                      ? _showSettings
+                                      : null,
+                                  power: _devicePower,
+                                  onToggle: _toggle,
+                                  lightIntensity: _lightIntensity,
+                                  onLightChanged: (value) =>
+                                      setState(() => _lightIntensity = value),
+                                  musicProgress: _musicProgress,
+                                  playing: _playing,
+                                  onMusicChanged: (value) =>
+                                      setState(() => _musicProgress = value),
+                                  onPlayToggle: () =>
+                                      setState(() => _playing = !_playing),
+                                  onTime: _onTime,
+                                  offTime: _offTime,
+                                  onOnTimeChanged: (value) =>
+                                      setState(() => _onTime = value),
+                                  onOffTimeChanged: (value) =>
+                                      setState(() => _offTime = value),
+                                  selectedForecast: _selectedForecast,
+                                  onForecastSelected: (value) =>
+                                      setState(() => _selectedForecast = value),
+                                ),
                         ),
-                      ),
-                      // Always-visible exit control for layouts without the
-                      // navigation rail (narrow / bottom-nav mode).
-                      if (isNarrow)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: _CloseSoftwareButton(onPressed: _closeSoftware),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+                  // Always-visible exit control for layouts without the
+                  // navigation rail (narrow / bottom-nav mode).
+                  if (isNarrow)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: _CloseSoftwareButton(onPressed: _closeSoftware),
+                    ),
+                ],
               ),
             ),
           ),
@@ -350,6 +344,11 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
                       icon: Icon(Icons.home_outlined),
                       selectedIcon: Icon(Icons.home_rounded),
                       label: 'Home',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.videocam_outlined),
+                      selectedIcon: Icon(Icons.videocam_rounded),
+                      label: 'Camera',
                     ),
                     NavigationDestination(
                       icon: Icon(Icons.meeting_room_outlined),
@@ -397,6 +396,7 @@ class _NavigationRail extends StatelessWidget {
   Widget build(BuildContext context) {
     const entries = [
       (DashboardSection.home, Icons.grid_view_rounded, 'Overview'),
+      (DashboardSection.camera, Icons.videocam_rounded, 'Camera'),
       (DashboardSection.rooms, Icons.cast_connected_rounded, 'Rooms'),
       (DashboardSection.devices, Icons.devices_other_rounded, 'Devices'),
       (DashboardSection.automation, Icons.auto_awesome_rounded, 'Automation'),
@@ -535,7 +535,10 @@ class _DashboardScrollView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final padding = isNarrow ? 12.0 : 18.0;
+    final horizontal = isNarrow ? 16.0 : 24.0;
+    // Extra bottom padding guarantees the last card clears the screen edge (and
+    // the bottom navigation bar in narrow mode) so the list scrolls to the end.
+    final bottom = 32.0 + MediaQuery.viewPaddingOf(context).bottom;
     return CustomScrollView(
       key: const Key('dashboard-scroll'),
       physics: const BouncingScrollPhysics(
@@ -544,7 +547,7 @@ class _DashboardScrollView extends StatelessWidget {
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       slivers: [
         SliverPadding(
-          padding: EdgeInsets.fromLTRB(padding, 14, padding, 24),
+          padding: EdgeInsets.fromLTRB(horizontal, 18, horizontal, bottom),
           sliver: SliverList.list(
             children: [
               _DashboardHeader(
@@ -1698,5 +1701,270 @@ class _PowerButton extends StatelessWidget {
       foregroundColor: isOn ? AppColors.blue : AppColors.muted,
     ),
     icon: const Icon(Icons.power_settings_new_rounded, size: 22),
+  );
+}
+
+/// Live preview from a hardware camera attached to the device.
+///
+/// Enumerates the physical cameras (V4L2 on Linux, AVFoundation on macOS,
+/// Media Foundation on Windows via the `camera_desktop` implementation),
+/// initialises a controller and renders its live feed. The controller is
+/// released whenever this page leaves the tree or the app is backgrounded, so
+/// the camera is only held while the tab is visible.
+class _CameraPage extends StatefulWidget {
+  const _CameraPage({required this.isNarrow});
+  final bool isNarrow;
+
+  @override
+  State<_CameraPage> createState() => _CameraPageState();
+}
+
+class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
+  CameraController? _controller;
+  List<CameraDescription> _cameras = const [];
+  int _index = 0;
+  String? _error;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _setUp();
+  }
+
+  Future<void> _setUp() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final cameras = await availableCameras();
+      if (!mounted) return;
+      _cameras = cameras;
+      if (cameras.isEmpty) {
+        setState(() {
+          _busy = false;
+          _error = 'No camera detected on this device.';
+        });
+        return;
+      }
+      await _openCamera(_index.clamp(0, cameras.length - 1));
+    } on CameraException catch (e) {
+      if (mounted) setState(() => _fail(e));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = 'Could not access the camera: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _openCamera(int index) async {
+    final previous = _controller;
+    _controller = null;
+    await previous?.dispose();
+
+    final controller = CameraController(
+      _cameras[index],
+      ResolutionPreset.high,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.jpeg,
+    );
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _index = index;
+        _busy = false;
+        _error = null;
+      });
+    } on CameraException catch (e) {
+      await controller.dispose();
+      if (mounted) setState(() => _fail(e));
+    }
+  }
+
+  void _fail(CameraException e) {
+    _busy = false;
+    switch (e.code) {
+      case 'CameraAccessDenied':
+      case 'CameraAccessDeniedWithoutPrompt':
+      case 'CameraAccessRestricted':
+        _error = 'Camera access was denied. Grant camera permission to view '
+            'the live feed.';
+      default:
+        _error = e.description ?? e.code;
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_cameras.length < 2 || _busy) return;
+    setState(() => _busy = true);
+    await _openCamera((_index + 1) % _cameras.length);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controller = _controller;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      if (controller != null) {
+        _controller = null;
+        controller.dispose();
+      }
+    } else if (state == AppLifecycleState.resumed && controller == null) {
+      _setUp();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontal = widget.isNarrow ? 16.0 : 24.0;
+    final controller = _controller;
+    final ready = controller != null && controller.value.isInitialized;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(horizontal, 18, horizontal, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: _CardTitle(
+                    title: 'Live Camera',
+                    subtitle: 'Hardware camera feed',
+                  ),
+                ),
+                if (_cameras.length > 1)
+                  IconButton.filled(
+                    tooltip: 'Switch camera',
+                    onPressed: _busy ? null : _switchCamera,
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.card,
+                      foregroundColor: AppColors.white,
+                      side: const BorderSide(color: AppColors.stroke),
+                      fixedSize: const Size(50, 50),
+                    ),
+                    icon: const Icon(Icons.cameraswitch_rounded),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: _Card(
+                padding: const EdgeInsets.all(14),
+                child: Center(
+                  child: ready
+                      ? _preview(controller)
+                      : _placeholder(),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _preview(CameraController controller) => AspectRatio(
+    aspectRatio: controller.value.aspectRatio,
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CameraPreview(controller),
+          Positioned(
+            left: 12,
+            top: 12,
+            child: _Pill(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  _LiveDot(),
+                  SizedBox(width: 6),
+                  Text('Live'),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            right: 12,
+            top: 12,
+            child: _Pill(
+              child: Text(
+                _cameras.isEmpty ? 'Camera' : _cameras[_index].name,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _placeholder() {
+    if (_busy) {
+      return const SizedBox(
+        width: 44,
+        height: 44,
+        child: CircularProgressIndicator(strokeWidth: 3),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(
+          Icons.videocam_off_rounded,
+          size: 46,
+          color: AppColors.muted,
+        ),
+        const SizedBox(height: 14),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Text(
+            _error ?? 'Camera unavailable.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.muted),
+          ),
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: _setUp,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.blue,
+            foregroundColor: Colors.white,
+          ),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Retry'),
+        ),
+      ],
+    );
+  }
+}
+
+class _LiveDot extends StatelessWidget {
+  const _LiveDot();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 7,
+    height: 7,
+    decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
   );
 }

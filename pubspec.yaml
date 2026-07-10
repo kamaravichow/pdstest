@@ -35,6 +35,12 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Live hardware camera preview. `camera` provides the standard
+  # CameraController/CameraPreview API; `camera_desktop` supplies the desktop
+  # platform implementation (Linux via GStreamer+V4L2, macOS, Windows).
+  camera: ^0.11.0
+  camera_desktop: ^1.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

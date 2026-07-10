@@ -17,6 +17,9 @@
 #   # Skip auto-launch on login:
 #   curl -fsSL .../install.sh | AUTOSTART=0 bash
 #
+#   # Skip installing GStreamer runtime deps (needed for the live camera tab):
+#   curl -fsSL .../install.sh | INSTALL_DEPS=0 bash
+#
 #   # Skip display-manager autologin (keep login screen):
 #   curl -fsSL .../install.sh | KIOSK=0 bash
 #
@@ -39,6 +42,10 @@ APP_DISPLAY_NAME="Haven Smart Home"
 VERSION="${VERSION:-latest}"
 # Launch the app when the desktop session starts (1=yes, 0=no).
 AUTOSTART="${AUTOSTART:-1}"
+# Install GStreamer runtime libraries the live camera preview needs (1=yes, 0=no).
+# camera_desktop captures via GStreamer + V4L2, so without these the Camera tab
+# stays blank. Uses the system package manager (apt/dnf/pacman/zypper) via sudo.
+INSTALL_DEPS="${INSTALL_DEPS:-1}"
 # Configure display-manager autologin so boot skips the login screen (1=yes, 0=no).
 # Requires root/sudo. Supported: gdm/gdm3, lightdm, sddm.
 KIOSK="${KIOSK:-1}"
@@ -87,6 +94,59 @@ run_root() {
     fi
   fi
   return 1
+}
+
+# Install the GStreamer runtime + V4L2 plugins the live camera preview relies on.
+# camera_desktop builds its pipeline on GStreamer (v4l2src -> appsink), so these
+# must be present at runtime on the device. We don't assume anything is already
+# installed — the system package manager is invoked directly (idempotent). This
+# is best-effort: on failure we warn but let the rest of the install proceed.
+install_runtime_deps() {
+  local pm=""
+  for candidate in apt-get dnf yum pacman zypper; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      pm="$candidate"
+      break
+    fi
+  done
+
+  if [ -z "$pm" ]; then
+    warn "no supported package manager found (apt/dnf/yum/pacman/zypper)"
+    warn "install GStreamer + its V4L2/good plugins manually or the Camera tab stays blank"
+    return 0
+  fi
+
+  info "Installing GStreamer runtime dependencies via $pm ..."
+  local ok=1
+  case "$pm" in
+    apt-get)
+      run_root apt-get update || warn "apt-get update failed; trying install anyway"
+      run_root apt-get install -y \
+        libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-tools || ok=0
+      ;;
+    dnf|yum)
+      run_root "$pm" install -y \
+        gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good || ok=0
+      ;;
+    pacman)
+      run_root pacman -Sy --needed --noconfirm \
+        gstreamer gst-plugins-base gst-plugins-good || ok=0
+      ;;
+    zypper)
+      run_root zypper --non-interactive install \
+        gstreamer gstreamer-plugins-base gstreamer-plugins-good || ok=0
+      ;;
+  esac
+
+  if [ "$ok" -eq 1 ]; then
+    info "GStreamer runtime dependencies installed."
+  else
+    warn "could not install GStreamer runtime deps (need root/sudo, or package names differ)"
+    warn "install them manually so the Camera tab can open the hardware camera, then re-run"
+    warn "or skip this step with INSTALL_DEPS=0"
+  fi
 }
 
 # Detect the active display manager: gdm | lightdm | sddm | unknown
@@ -290,6 +350,13 @@ ASSET_BASE="${APP_NAME}-linux-${asset_arch}.tar"
 for cmd in curl tar; do
   command -v "$cmd" >/dev/null 2>&1 || { err "'$cmd' is required but not installed"; exit 1; }
 done
+
+# Install GStreamer runtime deps for the live camera preview (best-effort).
+if [ "$INSTALL_DEPS" = "1" ]; then
+  install_runtime_deps
+else
+  info "Skipping GStreamer runtime deps (INSTALL_DEPS=$INSTALL_DEPS)"
+fi
 
 # Resolve the download URL from the GitHub releases API.
 if [ "$VERSION" = "latest" ]; then
