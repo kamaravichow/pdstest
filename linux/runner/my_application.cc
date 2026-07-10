@@ -26,8 +26,26 @@ static void my_application_activate(GApplication* application) {
   // Quit is available from the in-app Settings → Close software action.
   gtk_window_set_title(window, "Haven Smart Home");
   gtk_window_set_decorated(window, FALSE);
-  gtk_window_set_resizable(window, FALSE);
-  gtk_window_set_default_size(window, 1280, 720);
+  // The window must stay resizable: with resizable=FALSE the window manager
+  // cannot change its geometry, so gtk_window_fullscreen() is ignored and a
+  // fixed default size overflows panels smaller than it (content and the
+  // settings button end up off-screen).
+  gtk_window_set_resizable(window, TRUE);
+
+  // Size the window to the monitor up front so it is correct even on bare
+  // kiosk sessions with no window manager, where fullscreen requests are not
+  // honoured and the default size is what ends up on screen.
+  GdkRectangle geometry = {0, 0, 1280, 720};
+  GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(window));
+  GdkMonitor* monitor = gdk_display_get_primary_monitor(display);
+  if (monitor == nullptr && gdk_display_get_n_monitors(display) > 0) {
+    monitor = gdk_display_get_monitor(display, 0);
+  }
+  if (monitor != nullptr) {
+    gdk_monitor_get_geometry(monitor, &geometry);
+  }
+  gtk_window_set_default_size(window, geometry.width, geometry.height);
+  gtk_window_move(window, geometry.x, geometry.y);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

@@ -261,74 +261,64 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
         final railWidth = isNarrow ? 0.0 : (width < 900 ? 64.0 : 76.0);
 
         return Scaffold(
-          // SafeArea + ClipRect keep the UI inside the visible screen bounds on
-          // fullscreen kiosk panels; StackFit.expand gives the scroll view a
-          // bounded height so it can scroll all the way to the last card.
+          // SafeArea + ClipRect keep the UI inside the visible screen bounds
+          // on fullscreen kiosk panels. In narrow (bottom-nav) mode the close
+          // control lives inside the header rows rather than floating above
+          // them, so it never covers the settings or camera buttons.
           body: SafeArea(
             child: ClipRect(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragEnd: _onHorizontalSwipe,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (!isNarrow)
-                          _NavigationRail(
-                            width: railWidth,
-                            compactHeight: constraints.maxHeight < 700,
-                            selected: _section,
-                            onSelected: _selectSection,
-                            onOpenSettings: _showSettings,
-                            onClose: _closeSoftware,
-                          ),
-                        Expanded(
-                          child: _section == DashboardSection.camera
-                              ? _CameraPage(isNarrow: isNarrow)
-                              : _DashboardScrollView(
-                                  isDesktop: isDesktop,
-                                  isNarrow: isNarrow,
-                                  searchController: _searchController,
-                                  onAddDevice: _showAddDevice,
-                                  onOpenSettings: isNarrow
-                                      ? _showSettings
-                                      : null,
-                                  power: _devicePower,
-                                  onToggle: _toggle,
-                                  lightIntensity: _lightIntensity,
-                                  onLightChanged: (value) =>
-                                      setState(() => _lightIntensity = value),
-                                  musicProgress: _musicProgress,
-                                  playing: _playing,
-                                  onMusicChanged: (value) =>
-                                      setState(() => _musicProgress = value),
-                                  onPlayToggle: () =>
-                                      setState(() => _playing = !_playing),
-                                  onTime: _onTime,
-                                  offTime: _offTime,
-                                  onOnTimeChanged: (value) =>
-                                      setState(() => _onTime = value),
-                                  onOffTimeChanged: (value) =>
-                                      setState(() => _offTime = value),
-                                  selectedForecast: _selectedForecast,
-                                  onForecastSelected: (value) =>
-                                      setState(() => _selectedForecast = value),
-                                ),
-                        ),
-                      ],
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragEnd: _onHorizontalSwipe,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (!isNarrow)
+                      _NavigationRail(
+                        width: railWidth,
+                        compactHeight: constraints.maxHeight < 700,
+                        selected: _section,
+                        onSelected: _selectSection,
+                        onOpenSettings: _showSettings,
+                        onClose: _closeSoftware,
+                      ),
+                    Expanded(
+                      child: _section == DashboardSection.camera
+                          ? _CameraPage(
+                              isNarrow: isNarrow,
+                              onClose: isNarrow ? _closeSoftware : null,
+                            )
+                          : _DashboardScrollView(
+                              isDesktop: isDesktop,
+                              isNarrow: isNarrow,
+                              searchController: _searchController,
+                              onAddDevice: _showAddDevice,
+                              onOpenSettings: isNarrow ? _showSettings : null,
+                              onClose: isNarrow ? _closeSoftware : null,
+                              power: _devicePower,
+                              onToggle: _toggle,
+                              lightIntensity: _lightIntensity,
+                              onLightChanged: (value) =>
+                                  setState(() => _lightIntensity = value),
+                              musicProgress: _musicProgress,
+                              playing: _playing,
+                              onMusicChanged: (value) =>
+                                  setState(() => _musicProgress = value),
+                              onPlayToggle: () =>
+                                  setState(() => _playing = !_playing),
+                              onTime: _onTime,
+                              offTime: _offTime,
+                              onOnTimeChanged: (value) =>
+                                  setState(() => _onTime = value),
+                              onOffTimeChanged: (value) =>
+                                  setState(() => _offTime = value),
+                              selectedForecast: _selectedForecast,
+                              onForecastSelected: (value) =>
+                                  setState(() => _selectedForecast = value),
+                            ),
                     ),
-                  ),
-                  // Always-visible exit control for layouts without the
-                  // navigation rail (narrow / bottom-nav mode).
-                  if (isNarrow)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: _CloseSoftwareButton(onPressed: _closeSoftware),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -497,6 +487,7 @@ class _DashboardScrollView extends StatelessWidget {
     required this.searchController,
     required this.onAddDevice,
     this.onOpenSettings,
+    this.onClose,
     required this.power,
     required this.onToggle,
     required this.lightIntensity,
@@ -518,6 +509,7 @@ class _DashboardScrollView extends StatelessWidget {
   final TextEditingController searchController;
   final VoidCallback onAddDevice;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onClose;
   final Map<String, bool> power;
   final ValueChanged<String> onToggle;
   final double lightIntensity;
@@ -555,6 +547,7 @@ class _DashboardScrollView extends StatelessWidget {
                 isNarrow: isNarrow,
                 onAddDevice: onAddDevice,
                 onOpenSettings: onOpenSettings,
+                onClose: onClose,
               ),
               const SizedBox(height: 16),
               if (isDesktop)
@@ -623,11 +616,13 @@ class _DashboardHeader extends StatelessWidget {
     required this.isNarrow,
     required this.onAddDevice,
     this.onOpenSettings,
+    this.onClose,
   });
   final TextEditingController controller;
   final bool isNarrow;
   final VoidCallback onAddDevice;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -713,6 +708,10 @@ class _DashboardHeader extends StatelessWidget {
             ),
             icon: const Icon(Icons.settings_outlined),
           ),
+        ],
+        if (onClose != null) ...[
+          const SizedBox(width: 10),
+          _CloseSoftwareButton(onPressed: onClose!),
         ],
       ],
     );
@@ -1712,8 +1711,9 @@ class _PowerButton extends StatelessWidget {
 /// released whenever this page leaves the tree or the app is backgrounded, so
 /// the camera is only held while the tab is visible.
 class _CameraPage extends StatefulWidget {
-  const _CameraPage({required this.isNarrow});
+  const _CameraPage({required this.isNarrow, this.onClose});
   final bool isNarrow;
+  final VoidCallback? onClose;
 
   @override
   State<_CameraPage> createState() => _CameraPageState();
@@ -1888,6 +1888,10 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
                     ),
                     icon: const Icon(Icons.cameraswitch_rounded),
                   ),
+                if (widget.onClose != null) ...[
+                  const SizedBox(width: 10),
+                  _CloseSoftwareButton(onPressed: widget.onClose!),
+                ],
               ],
             ),
             const SizedBox(height: 16),

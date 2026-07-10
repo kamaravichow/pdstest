@@ -32,6 +32,24 @@ void main() {
     expect(find.text('Smart CCTV'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.byKey(const Key('dashboard-scroll')), findsOneWidget);
+
+    // The compact rail must keep settings on screen at 480px tall.
+    final settings = find.byKey(const Key('open-settings'));
+    expect(settings, findsOneWidget);
+    expect(tester.getBottomLeft(settings).dy, lessThanOrEqualTo(480));
+
+    // The dashboard must scroll all the way to the last card.
+    await tester.scrollUntilVisible(
+      find.text('Consumption Expense'),
+      160,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const Key('dashboard-scroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(find.text('Consumption Expense'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
