@@ -3,6 +3,7 @@
 # pdstest Linux installer
 #
 # Downloads the latest (or a specific) release build from GitHub and installs it.
+# By default also enables XDG autostart + display-manager autologin (kiosk mode).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | bash
@@ -13,22 +14,259 @@
 #   # Install system-wide (needs sudo/root):
 #   curl -fsSL .../install.sh | PREFIX=/usr/local bash
 #
+#   # Skip auto-launch on login:
+#   curl -fsSL .../install.sh | AUTOSTART=0 bash
+#
+#   # Skip display-manager autologin (keep login screen):
+#   curl -fsSL .../install.sh | KIOSK=0 bash
+#
+#   # Autologin as a specific user (default: current user):
+#   curl -fsSL .../install.sh | KIOSK_USER=pi bash
+#
+# Tip: when piping from curl, sudo may not be able to prompt for a password.
+# Prefer downloading first if kiosk setup needs credentials:
+#   curl -fsSL .../install.sh -o /tmp/pdstest-install.sh
+#   bash /tmp/pdstest-install.sh
+#   # or: sudo -E bash /tmp/pdstest-install.sh
+#
 set -euo pipefail
 
 # ---- Configuration ---------------------------------------------------------
 # Set REPO to "owner/name" of your GitHub repository. Override via env if needed.
 REPO="${REPO:-kamaravichow/pdstest}"
 APP_NAME="pdstest"
+APP_DISPLAY_NAME="Haven Smart Home"
 VERSION="${VERSION:-latest}"
+# Launch the app when the desktop session starts (1=yes, 0=no).
+AUTOSTART="${AUTOSTART:-1}"
+# Configure display-manager autologin so boot skips the login screen (1=yes, 0=no).
+# Requires root/sudo. Supported: gdm/gdm3, lightdm, sddm.
+KIOSK="${KIOSK:-1}"
+# User to autologin as (defaults to the invoking user, even under sudo).
+KIOSK_USER="${KIOSK_USER:-${SUDO_USER:-$(id -un)}}"
 
 # Install locations (user-local by default; set PREFIX=/usr/local for system-wide).
 PREFIX="${PREFIX:-$HOME/.local}"
 SHARE_DIR="$PREFIX/share/$APP_NAME"
 BIN_DIR="$PREFIX/bin"
+APPLICATIONS_DIR="$PREFIX/share/applications"
+# XDG autostart: user-local -> ~/.config/autostart; system-wide -> /etc/xdg/autostart.
+if [ "$PREFIX" = "$HOME/.local" ] || [ "$PREFIX" = "${HOME}/.local" ]; then
+  # Prefer the kiosk user's config dir when installing as root via sudo.
+  if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+    kiosk_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    AUTOSTART_DIR="${kiosk_home}/.config/autostart"
+  else
+    AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+  fi
+else
+  AUTOSTART_DIR="/etc/xdg/autostart"
+fi
 # ---------------------------------------------------------------------------
 
 err()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33mwarn:\033[0m %s\n' "$*" >&2; }
+
+# Run a command as root. Prefers an existing root shell, then passwordless sudo,
+# then an interactive sudo prompt when a TTY is available.
+run_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+    return
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n true >/dev/null 2>&1; then
+      sudo "$@"
+      return
+    fi
+    if [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then
+      info "sudo required for kiosk / display-manager changes — enter password if prompted"
+      sudo "$@"
+      return
+    fi
+  fi
+  return 1
+}
+
+# Detect the active display manager: gdm | lightdm | sddm | unknown
+detect_display_manager() {
+  local unit=""
+  if command -v systemctl >/dev/null 2>&1; then
+    unit="$(systemctl -q show display-manager.service -p Id --value 2>/dev/null || true)"
+  fi
+  case "$unit" in
+    gdm.service|gdm3.service) echo gdm; return ;;
+    lightdm.service)          echo lightdm; return ;;
+    sddm.service)             echo sddm; return ;;
+  esac
+
+  if [ -x /usr/sbin/gdm3 ] || [ -x /usr/sbin/gdm ] || [ -x /usr/bin/gdm ] || \
+     [ -d /etc/gdm3 ] || [ -d /etc/gdm ]; then
+    echo gdm; return
+  fi
+  if [ -x /usr/sbin/lightdm ] || [ -x /usr/bin/lightdm ] || [ -d /etc/lightdm ]; then
+    echo lightdm; return
+  fi
+  if [ -x /usr/bin/sddm ] || [ -d /etc/sddm.conf.d ] || [ -f /etc/sddm.conf ]; then
+    echo sddm; return
+  fi
+  echo unknown
+}
+
+# Pick a reasonable desktop session name for SDDM (optional but helpful).
+detect_sddm_session() {
+  local session=""
+  for dir in /usr/share/wayland-sessions /usr/share/xsessions; do
+    [ -d "$dir" ] || continue
+    # Prefer common desktop sessions over greeter/openbox-only entries.
+    for name in plasma plasma.desktop gnome gnome.desktop ubuntu ubuntu.desktop \
+                cinnamon mate xfce lxqt; do
+      base="${name%.desktop}"
+      if [ -f "$dir/${base}.desktop" ]; then
+        echo "$base"
+        return
+      fi
+    done
+    session="$(basename "$(find "$dir" -maxdepth 1 -name '*.desktop' | head -n1)" .desktop || true)"
+    if [ -n "$session" ]; then
+      echo "$session"
+      return
+    fi
+  done
+  echo ""
+}
+
+configure_gdm_autologin() {
+  local user="$1"
+  local conf=""
+  if [ -d /etc/gdm3 ]; then
+    conf="/etc/gdm3/custom.conf"
+  elif [ -d /etc/gdm ]; then
+    conf="/etc/gdm/custom.conf"
+  else
+    err "gdm config directory not found (/etc/gdm3 or /etc/gdm)"
+    return 1
+  fi
+
+  run_root bash -c "
+    set -euo pipefail
+    conf='$conf'
+    user='$user'
+    if [ -f \"\$conf\" ]; then
+      cp -a \"\$conf\" \"\${conf}.bak.\$(date +%Y%m%d%H%M%S)\"
+    else
+      mkdir -p \"\$(dirname \"\$conf\")\"
+      printf '%s\n' '[daemon]' 'WaylandEnable=true' > \"\$conf\"
+    fi
+    # Ensure [daemon] exists, then set / replace AutomaticLogin* keys.
+    if ! grep -q '^\[daemon\]' \"\$conf\"; then
+      printf '\n[daemon]\n' >> \"\$conf\"
+    fi
+    tmp=\"\$(mktemp)\"
+    awk -v user=\"\$user\" '
+      BEGIN { in_daemon=0; seen_enable=0; seen_user=0 }
+      /^\[/{
+        if (in_daemon && !seen_enable) print \"AutomaticLoginEnable=true\"
+        if (in_daemon && !seen_user)   print \"AutomaticLogin=\" user
+        in_daemon = (\$0 == \"[daemon]\")
+        print
+        next
+      }
+      in_daemon && /^#?AutomaticLoginEnable[[:space:]]*=/ {
+        print \"AutomaticLoginEnable=true\"; seen_enable=1; next
+      }
+      in_daemon && /^#?AutomaticLogin[[:space:]]*=/ {
+        print \"AutomaticLogin=\" user; seen_user=1; next
+      }
+      { print }
+      END {
+        if (in_daemon && !seen_enable) print \"AutomaticLoginEnable=true\"
+        if (in_daemon && !seen_user)   print \"AutomaticLogin=\" user
+      }
+    ' \"\$conf\" > \"\$tmp\"
+    mv \"\$tmp\" \"\$conf\"
+    chmod 644 \"\$conf\"
+  "
+  info "GDM autologin configured for user '$user' ($conf)"
+}
+
+configure_lightdm_autologin() {
+  local user="$1"
+  local conf_dir="/etc/lightdm/lightdm.conf.d"
+  local conf="$conf_dir/99-${APP_NAME}-autologin.conf"
+
+  run_root bash -c "
+    set -euo pipefail
+    mkdir -p '$conf_dir'
+    cat > '$conf' <<EOF
+[Seat:*]
+autologin-user=$user
+autologin-user-timeout=0
+EOF
+    chmod 644 '$conf'
+    # LightDM typically requires membership in the autologin group.
+    if getent group autologin >/dev/null 2>&1; then
+      usermod -aG autologin '$user' || true
+    else
+      groupadd -r autologin 2>/dev/null || true
+      usermod -aG autologin '$user' || true
+    fi
+  "
+  info "LightDM autologin configured for user '$user' ($conf)"
+}
+
+configure_sddm_autologin() {
+  local user="$1"
+  local session
+  session="$(detect_sddm_session)"
+  local conf_dir="/etc/sddm.conf.d"
+  local conf="$conf_dir/99-${APP_NAME}-autologin.conf"
+
+  run_root bash -c "
+    set -euo pipefail
+    mkdir -p '$conf_dir'
+    {
+      echo '[Autologin]'
+      echo 'User=$user'
+      echo 'Relogin=true'
+      if [ -n '$session' ]; then
+        echo 'Session=$session'
+      fi
+    } > '$conf'
+    chmod 644 '$conf'
+  "
+  if [ -n "$session" ]; then
+    info "SDDM autologin configured for user '$user' session='$session' ($conf)"
+  else
+    info "SDDM autologin configured for user '$user' ($conf)"
+    warn "no desktop session auto-detected; set Session= in $conf if login fails"
+  fi
+}
+
+configure_kiosk_autologin() {
+  local user="$1"
+  local dm
+
+  if ! id "$user" >/dev/null 2>&1; then
+    err "kiosk user '$user' does not exist"
+    return 1
+  fi
+
+  dm="$(detect_display_manager)"
+  info "Detected display manager: $dm"
+
+  case "$dm" in
+    gdm)      configure_gdm_autologin "$user" ;;
+    lightdm)  configure_lightdm_autologin "$user" ;;
+    sddm)     configure_sddm_autologin "$user" ;;
+    *)
+      err "unsupported or undetected display manager"
+      err "install/enable gdm, lightdm, or sddm, then re-run with KIOSK=1"
+      return 1
+      ;;
+  esac
+}
 
 # The build workflow publishes x64 and arm64 Linux bundles.
 os="$(uname -s)"
@@ -106,6 +344,63 @@ chmod +x "$SHARE_DIR/$APP_NAME"
 ln -sf "$SHARE_DIR/$APP_NAME" "$BIN_DIR/$APP_NAME"
 
 info "Installed $APP_NAME -> $BIN_DIR/$APP_NAME"
+
+# Desktop entry (menu launcher + optional session autostart).
+desktop_file() {
+  cat <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=$APP_DISPLAY_NAME
+Comment=Smart home dashboard
+Exec=$BIN_DIR/$APP_NAME
+TryExec=$BIN_DIR/$APP_NAME
+Path=$SHARE_DIR
+Terminal=false
+Categories=Utility;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true
+EOF
+}
+
+mkdir -p "$APPLICATIONS_DIR"
+desktop_file > "$APPLICATIONS_DIR/${APP_NAME}.desktop"
+chmod 644 "$APPLICATIONS_DIR/${APP_NAME}.desktop"
+info "Desktop entry -> $APPLICATIONS_DIR/${APP_NAME}.desktop"
+
+if [ "$AUTOSTART" = "1" ]; then
+  mkdir -p "$AUTOSTART_DIR"
+  # Same .desktop file in the autostart dir so the DE launches it on login.
+  desktop_file > "$AUTOSTART_DIR/${APP_NAME}.desktop"
+  chmod 644 "$AUTOSTART_DIR/${APP_NAME}.desktop"
+  # If we created the file as root for another user, fix ownership of what we touched.
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    chown "$SUDO_USER":"$SUDO_USER" "$AUTOSTART_DIR" "$AUTOSTART_DIR/${APP_NAME}.desktop" || true
+  fi
+  info "Autostart enabled -> $AUTOSTART_DIR/${APP_NAME}.desktop"
+  info "The app will launch when the desktop session starts."
+else
+  # Remove a previously installed autostart entry if the user opted out.
+  rm -f "$AUTOSTART_DIR/${APP_NAME}.desktop"
+  info "Autostart skipped (AUTOSTART=$AUTOSTART)"
+fi
+
+# Kiosk: skip the login screen via display-manager autologin (needs sudo).
+if [ "$KIOSK" = "1" ]; then
+  info "Configuring kiosk autologin for user '$KIOSK_USER' ..."
+  if configure_kiosk_autologin "$KIOSK_USER"; then
+    info "Kiosk ready. Reboot to boot straight into the desktop (no login screen)."
+    info "App autostart + DM autologin together bring up $APP_DISPLAY_NAME on boot."
+  else
+    warn "kiosk autologin could not be configured (sudo/root required, or unsupported DM)"
+    warn "re-run with a TTY so sudo can prompt, e.g.:"
+    warn "  curl -fsSL <install.sh-url> -o /tmp/${APP_NAME}-install.sh"
+    warn "  bash /tmp/${APP_NAME}-install.sh"
+    warn "or skip with KIOSK=0"
+  fi
+else
+  info "Kiosk autologin skipped (KIOSK=$KIOSK)"
+fi
 
 # Ensure the bin dir is on PATH for this session.
 case ":$PATH:" in

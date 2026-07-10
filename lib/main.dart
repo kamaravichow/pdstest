@@ -259,24 +259,40 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
         final isDesktop = width >= 1180;
         final railWidth = isNarrow ? 0.0 : (width < 900 ? 64.0 : 76.0);
 
+        // Keep everything inside the visible screen bounds. On fullscreen
+        // kiosk panels the window can be larger than the usable display, which
+        // pushed content (and the exit affordance) off screen.
+        final screen = MediaQuery.sizeOf(context);
+
         return Scaffold(
           body: SafeArea(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onHorizontalDragEnd: _onHorizontalSwipe,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (!isNarrow)
-                    _NavigationRail(
-                      width: railWidth,
-                      compactHeight: constraints.maxHeight < 700,
-                      selected: _section,
-                      onSelected: _selectSection,
-                      onOpenSettings: _showSettings,
-                    ),
-                  Expanded(
-                    child: _DashboardScrollView(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: screen.width,
+                  maxHeight: screen.height,
+                ),
+                child: ClipRect(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onHorizontalDragEnd: _onHorizontalSwipe,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (!isNarrow)
+                                _NavigationRail(
+                                  width: railWidth,
+                                  compactHeight: constraints.maxHeight < 700,
+                                  selected: _section,
+                                  onSelected: _selectSection,
+                                  onOpenSettings: _showSettings,
+                                  onClose: _closeSoftware,
+                                ),
+                              Expanded(
+                                child: _DashboardScrollView(
                       isDesktop: isDesktop,
                       isNarrow: isNarrow,
                       searchController: _searchController,
@@ -298,12 +314,27 @@ class _SmartHomeDashboardState extends State<SmartHomeDashboard> {
                           setState(() => _onTime = value),
                       onOffTimeChanged: (value) =>
                           setState(() => _offTime = value),
-                      selectedForecast: _selectedForecast,
-                      onForecastSelected: (value) =>
-                          setState(() => _selectedForecast = value),
-                    ),
+                                  selectedForecast: _selectedForecast,
+                                  onForecastSelected: (value) => setState(
+                                    () => _selectedForecast = value,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      // Always-visible exit control for layouts without the
+                      // navigation rail (narrow / bottom-nav mode).
+                      if (isNarrow)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: _CloseSoftwareButton(onPressed: _closeSoftware),
+                        ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -352,6 +383,7 @@ class _NavigationRail extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.onOpenSettings,
+    required this.onClose,
   });
 
   final double width;
@@ -359,6 +391,7 @@ class _NavigationRail extends StatelessWidget {
   final DashboardSection selected;
   final ValueChanged<DashboardSection> onSelected;
   final VoidCallback onOpenSettings;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -379,15 +412,9 @@ class _NavigationRail extends StatelessWidget {
       child: Column(
         children: [
           const SizedBox(height: 14),
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.cardRaised,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.home_rounded, color: AppColors.white),
-          ),
+          // Close/exit sits where the home logo used to, so quitting the
+          // kiosk is always one tap away.
+          _CloseSoftwareButton(onPressed: onClose),
           SizedBox(height: compactHeight ? 8 : 18),
           for (final entry in entries)
             Padding(
@@ -1633,6 +1660,25 @@ class _CardTitle extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
     ],
+  );
+}
+
+class _CloseSoftwareButton extends StatelessWidget {
+  const _CloseSoftwareButton({required this.onPressed});
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton.filled(
+    key: const Key('close-software-quick'),
+    tooltip: 'Close software',
+    onPressed: onPressed,
+    style: IconButton.styleFrom(
+      fixedSize: const Size(40, 40),
+      backgroundColor: AppColors.red.withValues(alpha: .18),
+      foregroundColor: AppColors.red,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    icon: const Icon(Icons.power_settings_new_rounded, size: 22),
   );
 }
 
