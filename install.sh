@@ -45,7 +45,9 @@ case "$arch" in
     exit 1
     ;;
 esac
-ASSET_NAME="${APP_NAME}-linux-${asset_arch}.tar.gz"
+# The build workflow publishes .tar.gz, but some releases carry a plain .tar;
+# accept either and let tar auto-detect compression on extract.
+ASSET_BASE="${APP_NAME}-linux-${asset_arch}.tar"
 
 for cmd in curl tar; do
   command -v "$cmd" >/dev/null 2>&1 || { err "'$cmd' is required but not installed"; exit 1; }
@@ -62,12 +64,20 @@ info "Looking up release ($VERSION) for $REPO ..."
 release_json="$(curl -fsSL "$api_url")" || { err "failed to query GitHub API ($api_url)"; exit 1; }
 
 # Pull the browser_download_url for our asset without requiring jq.
+# Prefer the gzipped bundle, but fall back to a plain .tar if that's all
+# the release ships. Anchor on a closing quote so ".tar" doesn't also match
+# ".tar.gz" and grab a truncated URL.
 download_url="$(printf '%s' "$release_json" \
-  | grep -o "https://[^\"]*$ASSET_NAME" \
-  | head -n1)"
+  | grep -o "https://[^\"]*${ASSET_BASE}\.gz\"" \
+  | head -n1 | tr -d '"')"
+if [ -z "$download_url" ]; then
+  download_url="$(printf '%s' "$release_json" \
+    | grep -o "https://[^\"]*${ASSET_BASE}\"" \
+    | head -n1 | tr -d '"')"
+fi
 
 if [ -z "$download_url" ]; then
-  err "could not find asset '$ASSET_NAME' in release '$VERSION'"
+  err "could not find asset '${ASSET_BASE}[.gz]' in release '$VERSION'"
   err "check that a release exists at https://github.com/$REPO/releases"
   exit 1
 fi
@@ -75,13 +85,15 @@ fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+archive="$tmp_dir/${download_url##*/}"
 info "Downloading $download_url"
-curl -fsSL "$download_url" -o "$tmp_dir/$ASSET_NAME"
+curl -fsSL "$download_url" -o "$archive"
 
 info "Installing to $SHARE_DIR"
 rm -rf "$SHARE_DIR"
 mkdir -p "$SHARE_DIR" "$BIN_DIR"
-tar -xzf "$tmp_dir/$ASSET_NAME" -C "$SHARE_DIR"
+# tar auto-detects gzip vs. plain tar, so this works for .tar and .tar.gz.
+tar -xf "$archive" -C "$SHARE_DIR"
 
 # The executable inside the bundle is named after the app.
 if [ ! -x "$SHARE_DIR/$APP_NAME" ]; then
