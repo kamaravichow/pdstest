@@ -1,0 +1,73 @@
+name: Build Linux
+
+on:
+  push:
+    tags:
+      - 'v*'          # Build and publish a release when a version tag is pushed
+    branches:
+      - main          # Build (artifact only) on pushes to main
+  workflow_dispatch:   # Allow manual runs from the Actions tab
+
+permissions:
+  contents: write      # Needed to create/update releases and upload assets
+
+env:
+  APP_NAME: pdstest
+  ARTIFACT_NAME: pdstest-linux-x64
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show versions
+        run: |
+          flutter --version
+          flutter config --enable-linux-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux release
+        run: flutter build linux --release
+
+      - name: Package bundle
+        id: package
+        run: |
+          BUNDLE_DIR="build/linux/x64/release/bundle"
+          TARBALL="${ARTIFACT_NAME}.tar.gz"
+          # Archive the whole bundle (executable + data/ + lib/), not just the binary,
+          # because a Flutter Linux app needs its bundled libs and assets to run.
+          tar -czf "$TARBALL" -C "$BUNDLE_DIR" .
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          ls -lh "$TARBALL"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ steps.package.outputs.tarball }}
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.tarball }}
+          generate_release_notes: true
