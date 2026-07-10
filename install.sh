@@ -19,7 +19,6 @@ set -euo pipefail
 # Set REPO to "owner/name" of your GitHub repository. Override via env if needed.
 REPO="${REPO:-aravind/pdstest}"
 APP_NAME="pdstest"
-ASSET_NAME="pdstest-linux-x64.tar.gz"
 VERSION="${VERSION:-latest}"
 
 # Install locations (user-local by default; set PREFIX=/usr/local for system-wide).
@@ -31,17 +30,22 @@ BIN_DIR="$PREFIX/bin"
 err()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 
-# Only x86_64 Linux is published by the build workflow.
+# The build workflow publishes x64 and arm64 Linux bundles.
 os="$(uname -s)"
 arch="$(uname -m)"
 if [ "$os" != "Linux" ]; then
   err "this installer only supports Linux (detected: $os)"
   exit 1
 fi
-if [ "$arch" != "x86_64" ] && [ "$arch" != "amd64" ]; then
-  err "only x86_64 is supported (detected: $arch)"
-  exit 1
-fi
+case "$arch" in
+  x86_64|amd64)   asset_arch="x64" ;;
+  aarch64|arm64)  asset_arch="arm64" ;;
+  *)
+    err "unsupported architecture: $arch (supported: x86_64, aarch64)"
+    exit 1
+    ;;
+esac
+ASSET_NAME="${APP_NAME}-linux-${asset_arch}.tar.gz"
 
 for cmd in curl tar; do
   command -v "$cmd" >/dev/null 2>&1 || { err "'$cmd' is required but not installed"; exit 1; }

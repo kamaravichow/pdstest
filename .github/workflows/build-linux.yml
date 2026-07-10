@@ -13,11 +13,19 @@ permissions:
 
 env:
   APP_NAME: pdstest
-  ARTIFACT_NAME: pdstest-linux-x64
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    name: Build Linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm   # Native ARM64 runner (no cross-compiling)
 
     steps:
       - name: Checkout
@@ -49,19 +57,27 @@ jobs:
 
       - name: Package bundle
         id: package
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          BUNDLE_DIR="build/linux/x64/release/bundle"
+          ARTIFACT_NAME="${APP_NAME}-linux-${ARCH}"
+          # The bundle path is named after the host CPU arch (x64 / arm64).
+          BUNDLE_DIR="$(find build/linux -maxdepth 2 -type d -name bundle | head -n1)"
+          if [ -z "$BUNDLE_DIR" ]; then
+            echo "::error::could not locate the built Linux bundle"; exit 1
+          fi
           TARBALL="${ARTIFACT_NAME}.tar.gz"
           # Archive the whole bundle (executable + data/ + lib/), not just the binary,
           # because a Flutter Linux app needs its bundled libs and assets to run.
           tar -czf "$TARBALL" -C "$BUNDLE_DIR" .
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           ls -lh "$TARBALL"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: ${{ steps.package.outputs.artifact_name }}
           path: ${{ steps.package.outputs.tarball }}
           if-no-files-found: error
 
