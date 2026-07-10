@@ -62,7 +62,7 @@ jobs:
         run: |
           ARTIFACT_NAME="${APP_NAME}-linux-${ARCH}"
           # The bundle path is named after the host CPU arch (x64 / arm64).
-          BUNDLE_DIR="$(find build/linux -maxdepth 2 -type d -name bundle | head -n1)"
+          BUNDLE_DIR="$(find build/linux -maxdepth 3 -type d -name bundle | head -n1)"
           if [ -z "$BUNDLE_DIR" ]; then
             echo "::error::could not locate the built Linux bundle"; exit 1
           fi
