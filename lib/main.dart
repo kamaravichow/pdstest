@@ -5,6 +5,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'rpicam.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SmartHomeApp());
@@ -1705,11 +1707,18 @@ class _PowerButton extends StatelessWidget {
 
 /// Live preview from a hardware camera attached to the device.
 ///
-/// Enumerates the physical cameras (V4L2 on Linux, AVFoundation on macOS,
-/// Media Foundation on Windows via the `camera_desktop` implementation),
-/// initialises a controller and renders its live feed. The controller is
-/// released whenever this page leaves the tree or the app is backgrounded, so
-/// the camera is only held while the tab is visible.
+/// Two capture paths, tried in order:
+///
+/// 1. rpicam (libcamera) via [RpicamFeed] — Raspberry Pi CSI camera modules.
+///    Their /dev/video* nodes are raw unicam/ISP interfaces that the plugin's
+///    GStreamer `v4l2src` pipeline can open but never get frames from, so the
+///    plugin is not usable for them; `rpicam-vid` is.
+/// 2. The `camera` plugin (V4L2 on Linux for USB webcams, AVFoundation on
+///    macOS, Media Foundation on Windows via `camera_desktop`).
+///
+/// Whichever path is active is released whenever this page leaves the tree or
+/// the app is backgrounded, so the camera is only held while the tab is
+/// visible.
 class _CameraPage extends StatefulWidget {
   const _CameraPage({required this.isNarrow, this.onClose});
   final bool isNarrow;
@@ -1722,6 +1731,8 @@ class _CameraPage extends StatefulWidget {
 class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
   CameraController? _controller;
   List<CameraDescription> _cameras = const [];
+  RpicamStack? _rpicam;
+  RpicamFeed? _feed;
   int _index = 0;
   String? _error;
   bool _busy = true;
@@ -1738,6 +1749,18 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
       _busy = true;
       _error = null;
     });
+    _disposeFeedSoon();
+    _rpicam = null;
+    // Prefer the Pi camera stack: CSI modules can't deliver frames through
+    // the plugin's V4L2 pipeline. Falls through to the plugin for USB webcams
+    // and other platforms.
+    final rpicam = await detectRpicam();
+    if (!mounted) return;
+    if (rpicam != null) {
+      _rpicam = rpicam;
+      await _openRpicamFeed(_index.clamp(0, rpicam.cameras.length - 1));
+      return;
+    }
     try {
       final cameras = await availableCameras();
       if (!mounted) return;
@@ -1816,6 +1839,48 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
     if (mounted && lastError != null) setState(() => _fail(lastError!));
   }
 
+  Future<void> _openRpicamFeed(int index) async {
+    _disposeFeedSoon();
+    final rpicam = _rpicam!;
+    final feed = RpicamFeed(
+      binary: rpicam.binary,
+      camera: rpicam.cameras[index],
+    );
+    feed.addListener(_onFeedChanged);
+    setState(() {
+      _feed = feed;
+      _index = index;
+    });
+    await feed.start();
+  }
+
+  /// The feed notifies on every decoded frame; only rebuild the page when its
+  /// readiness or error state changes (the preview repaints itself).
+  void _onFeedChanged() {
+    if (!mounted) return;
+    final feed = _feed;
+    if (feed == null) return;
+    final busy = feed.image == null && feed.error == null;
+    if (busy != _busy || feed.error != _error) {
+      setState(() {
+        _busy = busy;
+        _error = feed.error;
+      });
+    }
+  }
+
+  /// Releases the camera process immediately, but defers disposing the feed
+  /// itself until after the next frame so any [RpicamPreview] still in the
+  /// tree has unsubscribed first.
+  void _disposeFeedSoon() {
+    final feed = _feed;
+    if (feed == null) return;
+    feed.removeListener(_onFeedChanged);
+    _feed = null;
+    feed.stop();
+    WidgetsBinding.instance.addPostFrameCallback((_) => feed.dispose());
+  }
+
   void _fail(CameraException e) {
     _busy = false;
     switch (e.code) {
@@ -1829,22 +1894,33 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
     }
   }
 
+  int get _switchableCameraCount =>
+      _rpicam?.cameras.length ?? _cameras.length;
+
   Future<void> _switchCamera() async {
-    if (_cameras.length < 2 || _busy) return;
+    if (_switchableCameraCount < 2 || _busy) return;
     setState(() => _busy = true);
-    await _openCamera((_index + 1) % _cameras.length);
+    final rpicam = _rpicam;
+    if (rpicam != null) {
+      await _openRpicamFeed((_index + 1) % rpicam.cameras.length);
+    } else {
+      await _openCamera((_index + 1) % _cameras.length);
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
+      final controller = _controller;
       if (controller != null) {
         _controller = null;
         controller.dispose();
       }
-    } else if (state == AppLifecycleState.resumed && controller == null) {
+      _disposeFeedSoon();
+    } else if (state == AppLifecycleState.resumed &&
+        _controller == null &&
+        _feed == null) {
       _setUp();
     }
   }
@@ -1853,6 +1929,7 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
+    _disposeFeedSoon();
     super.dispose();
   }
 
@@ -1860,7 +1937,12 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final horizontal = widget.isNarrow ? 16.0 : 24.0;
     final controller = _controller;
-    final ready = controller != null && controller.value.isInitialized;
+    final feed = _feed;
+    final ready = !_busy &&
+        _error == null &&
+        (feed != null
+            ? feed.image != null
+            : controller != null && controller.value.isInitialized);
     return SafeArea(
       top: false,
       child: Padding(
@@ -1876,7 +1958,7 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
                     subtitle: 'Hardware camera feed',
                   ),
                 ),
-                if (_cameras.length > 1)
+                if (_switchableCameraCount > 1)
                   IconButton.filled(
                     tooltip: 'Switch camera',
                     onPressed: _busy ? null : _switchCamera,
@@ -1899,9 +1981,7 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
               child: _Card(
                 padding: const EdgeInsets.all(14),
                 child: Center(
-                  child: ready
-                      ? _preview(controller)
-                      : _placeholder(),
+                  child: ready ? _preview() : _placeholder(),
                 ),
               ),
             ),
@@ -1911,41 +1991,46 @@ class _CameraPageState extends State<_CameraPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _preview(CameraController controller) => AspectRatio(
-    aspectRatio: controller.value.aspectRatio,
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CameraPreview(controller),
-          Positioned(
-            left: 12,
-            top: 12,
-            child: _Pill(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  _LiveDot(),
-                  SizedBox(width: 6),
-                  Text('Live'),
-                ],
+  String get _activeCameraName {
+    final rpicam = _rpicam;
+    if (rpicam != null) return rpicam.cameras[_index].name;
+    return _cameras.isEmpty ? 'Camera' : _cameras[_index].name;
+  }
+
+  Widget _preview() {
+    final feed = _feed;
+    return AspectRatio(
+      aspectRatio: feed?.aspectRatio ?? _controller!.value.aspectRatio,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (feed != null) RpicamPreview(feed) else CameraPreview(_controller!),
+            Positioned(
+              left: 12,
+              top: 12,
+              child: _Pill(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    _LiveDot(),
+                    SizedBox(width: 6),
+                    Text('Live'),
+                  ],
+                ),
               ),
             ),
-          ),
-          Positioned(
-            right: 12,
-            top: 12,
-            child: _Pill(
-              child: Text(
-                _cameras.isEmpty ? 'Camera' : _cameras[_index].name,
-              ),
+            Positioned(
+              right: 12,
+              top: 12,
+              child: _Pill(child: Text(_activeCameraName)),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _placeholder() {
     if (_busy) {

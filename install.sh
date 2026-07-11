@@ -17,7 +17,8 @@
 #   # Skip auto-launch on login:
 #   curl -fsSL .../install.sh | AUTOSTART=0 bash
 #
-#   # Skip installing GStreamer runtime deps (needed for the live camera tab):
+#   # Skip installing camera runtime deps (GStreamer for USB webcams,
+#   # rpicam-apps for Raspberry Pi CSI cameras — needed for the live camera tab):
 #   curl -fsSL .../install.sh | INSTALL_DEPS=0 bash
 #
 #   # Skip display-manager autologin (keep login screen):
@@ -42,9 +43,10 @@ APP_DISPLAY_NAME="Haven Smart Home"
 VERSION="${VERSION:-latest}"
 # Launch the app when the desktop session starts (1=yes, 0=no).
 AUTOSTART="${AUTOSTART:-1}"
-# Install GStreamer runtime libraries the live camera preview needs (1=yes, 0=no).
-# camera_desktop captures via GStreamer + V4L2, so without these the Camera tab
-# stays blank. Uses the system package manager (apt/dnf/pacman/zypper) via sudo.
+# Install runtime libraries the live camera preview needs (1=yes, 0=no).
+# USB webcams stream via GStreamer + V4L2 (camera_desktop); Raspberry Pi CSI
+# camera modules stream via rpicam-vid (libcamera). Without these the Camera
+# tab stays blank. Uses the system package manager (apt/dnf/pacman/zypper).
 INSTALL_DEPS="${INSTALL_DEPS:-1}"
 # Configure display-manager autologin so boot skips the login screen (1=yes, 0=no).
 # Requires root/sudo. Supported: gdm/gdm3, lightdm, sddm.
@@ -96,11 +98,16 @@ run_root() {
   return 1
 }
 
-# Install the GStreamer runtime + V4L2 plugins the live camera preview relies on.
-# camera_desktop builds its pipeline on GStreamer (v4l2src -> appsink), so these
-# must be present at runtime on the device. We don't assume anything is already
-# installed — the system package manager is invoked directly (idempotent). This
-# is best-effort: on failure we warn but let the rest of the install proceed.
+# Install the camera runtime the live camera preview relies on:
+#   - GStreamer + V4L2 plugins: camera_desktop pipes USB webcams through
+#     GStreamer (v4l2src -> appsink).
+#   - rpicam-apps: Raspberry Pi CSI camera modules only produce frames through
+#     the libcamera stack; the app streams them via `rpicam-vid`. Preinstalled
+#     on Raspberry Pi OS, and the package only exists there, so it is installed
+#     best-effort on apt systems and skipped elsewhere.
+# We don't assume anything is already installed — the system package manager is
+# invoked directly (idempotent). This is best-effort: on failure we warn but
+# let the rest of the install proceed.
 install_runtime_deps() {
   local pm=""
   for candidate in apt-get dnf yum pacman zypper; do
@@ -125,6 +132,13 @@ install_runtime_deps() {
         libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
         gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
         gstreamer1.0-tools || ok=0
+      # Raspberry Pi CSI cameras need rpicam-vid; the package only exists in
+      # the Raspberry Pi OS repos, so failure elsewhere is expected and fine.
+      if ! command -v rpicam-vid >/dev/null 2>&1 && \
+         ! command -v libcamera-vid >/dev/null 2>&1; then
+        run_root apt-get install -y rpicam-apps || \
+          warn "rpicam-apps unavailable (fine unless using a Pi CSI camera module)"
+      fi
       ;;
     dnf|yum)
       run_root "$pm" install -y \
